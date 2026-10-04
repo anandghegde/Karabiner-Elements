@@ -43,7 +43,10 @@ public:
           targets.push_back(system_core_configuration_file_path_);
 
           file_monitor_ = std::make_unique<pqrs::osx::file_monitor>(weak_dispatcher_,
-                                                                    targets);
+                                                                    pqrs::osx::file_monitor::parameters{
+                                                                        .files = targets,
+                                                                        .max_file_size = core_configuration::core_configuration::max_configuration_file_size,
+                                                                    });
 
           file_monitor_->file_changed.connect([this](auto&& changed_file_path,
                                                      auto&& changed_file_body) {

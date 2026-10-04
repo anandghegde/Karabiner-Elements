@@ -64,6 +64,30 @@ int main() {
   auto scoped_run_loop_thread_manager = krbn::run_loop_thread_utility::initialize_scoped_run_loop_thread_manager(
       pqrs::cf::run_loop_thread::failure_policy::abort);
 
+  "configuration_monitor rejects FIFO and oversized files"_test = [] {
+    std::filesystem::create_directories("target");
+    std::filesystem::remove("target/user.json");
+    std::filesystem::remove("target/system.json");
+    expect(mkfifo("target/user.json", 0600) == 0);
+    {
+      test_configuration_monitor monitor;
+      expect(monitor.get_count() == 0);
+      expect(monitor.get_last_load_state() == krbn::core_configuration::core_configuration::load_state::other_error);
+    }
+    std::filesystem::remove("target/user.json");
+    {
+      std::ofstream output("target/user.json");
+      output << "{}";
+    }
+    std::filesystem::resize_file("target/user.json", krbn::core_configuration::core_configuration::max_configuration_file_size + 1);
+    {
+      test_configuration_monitor monitor;
+      expect(monitor.get_count() == 0);
+      expect(monitor.get_last_load_state() == krbn::core_configuration::core_configuration::load_state::other_error);
+    }
+    std::filesystem::remove("target/user.json");
+  };
+
   "configuration_monitor"_test = [] {
     {
       system("rm -rf target");

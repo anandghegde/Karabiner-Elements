@@ -15,15 +15,13 @@
 #include "logger.hpp"
 #include "types.hpp"
 #include "vector_utility.hpp"
-#include <cerrno>
-#include <cstdio>
 #include <filesystem>
 #include <glob/glob.hpp>
 #include <memory>
+#include <pqrs/filesystem.hpp>
 #include <pqrs/osx/process_info.hpp>
 #include <pqrs/osx/session.hpp>
 #include <string>
-#include <sys/stat.h>
 #include <unordered_map>
 
 // Example: tests/src/core_configuration/json/example.json
@@ -219,82 +217,28 @@ public:
 private:
   void load_file(const std::string& file_path,
                  uid_t expected_file_owner) {
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> input(std::fopen(file_path.c_str(),
-                                                                        "r"),
-                                                             &std::fclose);
-    if (!input) {
-      // errno is thread-local on macOS, so another thread cannot overwrite it.
-      auto error = std::error_code(errno,
-                                   std::generic_category());
-      if (error != std::errc::no_such_file_or_directory &&
-          error != std::errc::not_a_directory) {
-        load_state_ = is_permission_error(error)
-                          ? load_state::permission_error
-                          : load_state::other_error;
-        logger::get_logger()->error("failed to open {0}: {1}",
-                                    file_path,
-                                    error.message());
-      }
-      return;
-    }
-
-    struct stat file_stat;
-    // Check the ownership of the file actually opened.
-    if (fstat(fileno(input.get()), &file_stat) != 0) {
-      // errno is thread-local on macOS, so another thread cannot overwrite it.
-      auto error = std::error_code(errno,
-                                   std::generic_category());
-      load_state_ = is_permission_error(error)
-                        ? load_state::permission_error
-                        : load_state::other_error;
-      logger::get_logger()->error("failed to stat {0}: {1}",
-                                  file_path,
-                                  error.message());
-      return;
-    }
-
-    // Load karabiner.json only when the owner is root or current session user.
-    if (file_stat.st_uid != 0 &&
-        file_stat.st_uid != expected_file_owner) {
-      logger::get_logger()->warn("{0} is not owned by a valid user.",
-                                 file_path);
-      load_state_ = load_state::other_error;
-      return;
-    }
-
-    std::string contents;
-    char buffer[8 * 1024];
-    while (auto size = std::fread(buffer,
-                                  1,
-                                  sizeof(buffer),
-                                  input.get())) {
-      // Enforce the limit while reading, since the file may grow or have no EOF.
-      if (size > max_configuration_file_size - contents.size()) {
-        load_state_ = load_state::other_error;
-        logger::get_logger()->error("failed to read {0}: configuration file exceeds {1} bytes",
-                                    file_path,
-                                    max_configuration_file_size);
+    auto contents = pqrs::filesystem::read_file(file_path,
+                                                pqrs::filesystem::read_file_options{
+                                                    .max_size = max_configuration_file_size,
+                                                    .allowed_owners = std::vector<uid_t>{0, expected_file_owner},
+                                                });
+    if (!contents) {
+      const auto& error = contents.error();
+      using reason = pqrs::filesystem::read_file_error::reason;
+      if (error.type == reason::open_failed &&
+          (error.code == std::errc::no_such_file_or_directory ||
+           error.code == std::errc::not_a_directory)) {
         return;
       }
-      contents.append(buffer,
-                      size);
-    }
-
-    if (std::ferror(input.get())) {
-      // errno is thread-local on macOS, so another thread cannot overwrite it.
-      auto error = std::error_code(errno,
-                                   std::generic_category());
-      load_state_ = is_permission_error(error)
+      load_state_ = is_permission_error(error.code)
                         ? load_state::permission_error
                         : load_state::other_error;
-      logger::get_logger()->error("failed to read {0}: {1}",
-                                  file_path,
-                                  error.message());
+      logger::get_logger()->error("failed to read {0}: {1}", file_path, error.message());
       return;
     }
 
     try {
-      json_ = json_utility::parse_jsonc(contents);
+      json_ = json_utility::parse_jsonc(**contents);
 
       helper_values_.update_value(json_,
                                   error_handling_);
