@@ -19,7 +19,6 @@
 #include <optional>
 #include <pqrs/dispatcher.hpp>
 #include <pqrs/osx/input_source_monitor.hpp>
-#include <pqrs/osx/json_file_monitor.hpp>
 #include <pqrs/osx/session.hpp>
 #include <pqrs/osx/system_preferences_monitor.hpp>
 #include <sys/stat.h>
